@@ -1,0 +1,57 @@
+---
+title: "simple example for conditioanl probability"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## data summary
+
+We have a hypothetical population of 1 million individuals with the following conditional probabilities as described below:
+
+The test is positive 85% of the time when tested on a patient with the disease (high sensitivity):  𝑃(test+|disease)=0.85 
+The test is negative 90% of the time when tested on a healthy patient (high specificity):  𝑃(test−|heathy)=0.90 
+The disease is prevalent in about 2% of the community:  𝑃(disease)=0.02
+
+
+
+```{r sample dataset for conditional probability}
+set.seed(1, sample.kind="Rounding") 
+
+disease <- sample(c(0,1), size=1e6, replace=TRUE, prob=c(0.98,0.02))
+test <- rep(NA, 1e6)
+test[disease==0] <- sample(c(0,1), size=sum(disease==0), replace=TRUE, prob=c(0.90,0.10))
+test[disease==1] <- sample(c(0,1), size=sum(disease==1), replace=TRUE, prob=c(0.15, 0.85))
+
+head(test)
+
+```
+```{r summary of conditional probability calculations}
+p_of_having_disease<-mean(disease==1)
+p_of_not_having_disease<-mean(disease==0)
+p_of_negative_test<-mean(test==0)
+p_of_positive_test<-mean(test==1)
+p_negtest_given_decease<-mean(test[disease==1]==0)
+p_postest_given_decease<-mean(test[disease==1]==1)
+p_having_disease_given_neg_test<-p_negtest_given_decease * (p_of_having_disease/p_of_negative_test)
+p_having_disease_given_pos_test<-p_postest_given_decease * (p_of_having_disease/p_of_positive_test)
+#If a patient's test is positive, how much does that increase their risk of having the disease?
+p_of_having_disease
+p_of_not_having_disease
+p_of_negative_test
+p_of_positive_test
+p_having_disease_given_neg_test
+p_having_disease_given_pos_test
+#If a patient's test is positive, how much does that increase their risk of having the disease?
+p_having_disease_given_pos_test/p_of_having_disease
+
+
+
+
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
