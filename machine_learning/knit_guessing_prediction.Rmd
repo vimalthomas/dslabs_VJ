@@ -39,7 +39,7 @@ cutoff
 ```{r}
 
 #accuracy for sepal.Width
-
+library(purrr)
 accuracy <- map_dbl(cutoff, function(x){
   y_hat <- ifelse(train$Sepal.Width > x, "virginica", "versicolor")
   mean(y_hat == train$Species)
