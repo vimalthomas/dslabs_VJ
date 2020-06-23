@@ -1,0 +1,604 @@
+---
+title: "Heart Disease Detection Model "
+output: pdf_document
+author: Vimal Thomas Joseph
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Introduction
+
+The objective of this project is to detect if a person has heart disease or not given the list of features. The focus is to analyze the dataset for correlation, anomalies, biases and relationships present in the data and then build an array of machine learning models using  a list of suitable features that can assist predicting if a person has the heart disease or not.
+
+# The Model generation code consists of the following modules
+
+1) Library Management
+2) Function Loading
+3) Data Preparation
+4) Data Analysis and Visualization
+5) Scaling, PCA & Cluster Analysis
+6) Creation of training and testing datasets
+7) Machine Learning Model generation
+8) Creation of Ensemble 
+
+
+
+```{r 1. Library Management, warning=FALSE, echo=FALSE, results=FALSE, message=FALSE}
+#######################################
+## 1. Library Management
+####################################### l
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+library(tidyr)
+library(naniar)
+library(rpart)
+library(matrixStats)
+library(graphics)
+library(stats)
+library(dplyr)
+library(lubridate)
+library(ggrepel)
+library(gridExtra)
+library(ggthemes)
+```
+```{r 2.Function Loading}
+#######################################
+## 1. Function Loading
+#######################################
+
+RMSE<-function(true_rating,predicted_rating){
+  sqrt(mean((true_rating-predicted_rating)^2))
+  
+}
+
+predict_kmeans <- function(x, k) {
+  centers <- k$centers    # extract cluster centers
+  # calculate distance to cluster centers
+  distances <- sapply(1:nrow(x), function(i){
+    apply(centers, 1, function(y) dist(rbind(x[i,], y)))
+  })
+  max.col(-t(distances))  # select cluster with min distance to center
+}
+```
+
+# Data Preparation
+
+For the heart disease detection project, the data is loaded from https://archive.ics.uci.edu/ml/machine-learning-databases/
+
+The following section describes the characteristics of the feature variables.
+
+1.  age - age in years    
+2.  sex - (1 = male; 0 = female)  
+3.  cp -chest pain type 1: typical angina, 2: atypical angina, 3: non-anginal pain, 4: asymptomatic     
+4.  trestbps - resting blood pressure (in mm Hg on admission to the hospital) 
+5.  ch - serum cholestoral in mg/dl  
+6.  fbs - (fasting blood sugar > 120 mg/dl)  (1 = true; 0 = false)
+7.  restecg - resting electrocardiographic results  
+                - 0: normal, 1: having ST-T wave abnormality, 2: showing probable or definite left ventricular hypertrophy
+8.  thalach - maximum heart rate achieved
+9.  exang - exercise induced angina (1 = yes; 0 = no)
+10. oldpeak - ST depression induced by exercise relative to rest
+11. slope - the slope of the peak exercise ST segment
+                -1: upsloping,2: flat, 3: downsloping
+12. ca - number of major vessels (0-3) colored by fluoroscopy     
+13. thal - 3 = normal; 6 = fixed defect; 7 = reversable defect
+14. num - num: diagnosis of heart disease (angiographic disease status)
+                Value 0: < 50% diamep
+                ter narrowing
+                Value 1: > 50% diameter narrowing
+
+
+```{r 3. Data Preparation, message=FALSE, warning=FALSE, results='hide'}
+
+#################################
+# 3. Data Preparation
+#################################
+
+#Data downloading
+heart_data<-read_csv(
+  url("https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data"),
+  col_names=FALSE)
+
+#Adding column names
+c<-c("age","sex","cp","trestbps","chol","fbs","restecg","thalach","exang","oldpeak","slope","ca","thal","num")
+
+colnames(heart_data)<-c
+```
+# Data Analysis and Visualizations.
+
+
+Let us look at the data we have downloaded and added column names to.
+
+```{r results='markup'}
+head(heart_data)
+```
+
+The next step is to find out and replace any missing values. Based on further evaluation, there are 6 rows that contain missing values.
+```{r results='markup'}
+
+
+x<-apply(heart_data, 1, function(x){
+  
+  as.integer(any(grep("\\?",x)))
+  
+  })
+
+index<-which(x==1)
+heart_data_missing_values<-sapply(index,function(i){
+  
+  heart_data[i,]
+})
+
+heart_data_missing_values
+
+```
+
+
+Let us replace them with NAs which would ease our further replacement options.
+
+```{r}
+heart_data$ca[heart_data$ca == "?"] <- NA
+heart_data$thal[heart_data$thal == "?"] <- NA
+
+```
+
+Now, to fill NAs with suitable replacement value, let us look at the columns with missing values. - ca and thal.
+
+```{r}
+summary(as.numeric(heart_data$ca))
+summary(as.numeric(heart_data$thal))
+
+```
+
+The missing values are replaced with the median values of the impacted columns. In this case, ca column gets a value 0 an thal gets a values 3.
+
+Insight Gained: After replacing the values, we should note that the median did not change for both columns as expected. 
+
+```{r}
+hd_wrangled<-heart_data%>%
+  filter(num %in% c(1,0))%>%
+  mutate(ca=ifelse(is.na(ca),0,as.numeric(ca)),
+         thal=ifelse(is.na(thal),3,as.numeric(thal)),
+         )
+summary(as.numeric(hd_wrangled$ca))
+summary(as.numeric(hd_wrangled$thal))
+
+```
+
+# Data Visualization
+
+Let us create a side by side graph of disease (0 - no disease,1 - disease) and sex(Male,Female).
+
+
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+
+#Data visualization
+
+#Creating a grid graph of disease and sex proportions.
+
+p1<-hd_wrangled%>%select(sex,num,age)%>%
+  ggplot(aes(num,group=sex,fill=sex))+
+  geom_bar(show.legend = FALSE)+
+  xlab("Disease") +
+  ylab("Count of People") +
+  ggtitle("Disease by Male/Female ") +
+  theme_economist()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8))
+
+  
+p2<-hd_wrangled%>%select(sex,num,age)%>%
+  ggplot(aes(sex,group=num,fill=num))+
+  geom_bar(show.legend = FALSE )+
+  xlab("Sex") +
+  ylab("Count of People") +
+  ggtitle("Male/Female by Disease ") +
+  theme_economist()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8))
+
+grid.arrange(p1,p2,ncol=2)
+
+
+```
+
+Insight Gained: Based on both the graphs, males seem to develop heart disease condition more than females.
+
+
+
+
+Let us create a graph of disease condition based on age. Also, it would be useful to create another graph by plotting cholestoral and blood pressure by age.
+
+
+
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+#Creating graph of disease by Age.
+
+hd_wrangled%>%select(sex,num,age)%>%
+  ggplot(aes(age,group=num,fill=num))+
+  geom_bar()+
+  xlab("Age") +
+  ylab("Count of People") +
+  ggtitle("Disease by Age ") +
+  theme_economist()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8))
+#Line Graph of serum cholestoral and blood pressue.
+
+hd_wrangled%>%select(chol,age,trestbps)%>%group_by(age)%>%summarize(max_chol=max(chol),
+                                                                    max_trestbps=max(trestbps),.groups = "keep")%>%
+  ggplot()+
+  geom_line(aes(age,max_chol,colour="red"))+
+  geom_line(aes(age,max_trestbps,colour="blue"))+
+  xlab("Age") +
+  ylab("Max of Chol & Trestbps")+
+  scale_colour_discrete(name  ="colour",
+                        labels=c("Chol", "Trestbps"))+
+  ggtitle("Chol & Trestbps by Age ")+
+  theme_economist()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8))
+
+```
+
+Insight Gained: It is very evident that the heart disease condition begins to develop from late thirties and is at peak between 55 and 65. Also based on the second graph, we could note that the pattern of cholestoral and blood pressure increases with age as expected.
+
+
+# Scaling, PCA and Cluster Analysis
+
+The next important step in the creation of a machine learning algorithm is to verify how the features are correlated among themselves. Do they have a feature that needs to be scaled down in order to provide an equal importance in the prediction process?
+
+Before progressing further, the cleansed data is converted into a set of feature and predicted variables.
+
+creation of feature (x) and outcome (y) variables to predict y_hat. As taught in the course, features are created as vector matrix and outcome data is created as a y factor
+
+```{r ,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+
+hd_m<-as.matrix(hd_wrangled)
+
+hd_x<-hd_m[,1:13]
+hd_y<-as.factor(hd_m[,14])
+
+```
+First step is to look at the features if any of the feature has higher variance proportions when compared to other features. To do that, let us look at the summary of the features to see what values we deal with.
+```{r, results='markup',tidy=TRUE}
+summary(hd_x)
+```
+It looks like age, trestbps, chol and thalach have values in 100s while the rest of the features have values in 1s.
+
+This could create a broader variance differences when preparing the data for model training. As taught in the course, let us see if scaling this dataset makes any difference in their variance proportions.
+
+One way to find out if scaling is required, is by conducting PCA. Let us compute Principal Component Analysis - PCA for scaled vs unscaled dataset of same features.
+
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+unscaled <- prcomp(hd_x)
+scaled <- prcomp(hd_x, scale = TRUE)
+
+```
+PCAs before scaling:
+```{r}
+
+summary(unscaled)
+
+```
+PCAs after scaling
+```{r}
+summary(scaled)
+```
+Insight Gained: Proportion of the variance for PC1 reduced from 70% to 18%. This scenario is observed for other features as well. Hence, let us scale the data before we proceed further.
+Also, the diagrams below show how the data is centered before and after the scaling.
+
+
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+
+par(mfrow=c(1,2))
+biplot(unscaled)
+biplot(scaled)
+```
+Let us scale data set by subtracting the column average from each column values and dividing that by overall column standard deviation.
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+hd_x_minus<-sweep(hd_x,2,colMeans(hd_x),"-")
+
+hd_xdiv<-sweep(hd_x_minus,2,colSds(hd_x_minus),"/")
+```
+
+The next step is to perform cluster analysis to understand feature grouping and their distances between them. In order to perform cluster analysis, let us calculate the distance between the matrix’s features. Following heatmap shows the features after calculating distances between the scaled data.
+
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+d_features <- dist(t(hd_xdiv))
+
+heatmap(as.matrix(d_features))
+```
+
+The next step is analyzing the clusters present in the dataset. This will enhance our ability to explain why certain model choose a specific set of features leaving out the rest. Especially models like classification trees and Random Forest (even though random forest model reduces the human interpretability of the prediction).
+
+Let us try to perform hierarchical clustering as taught in the course on the 14 features and then cut the tree into 3 groups. this analysis clearly shows prominent cluster groups like thalach. we can use this information in the clustering models 
+
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+hc<-hclust(d_features, method = "complete")
+plot(hc)
+
+```
+
+Insight Gained: The clusters after grouped into their prominent groups are shown below. 
+
+1) thalach being in its own cluster. 
+2) a group of clusters formed by cp,exang, oldpeak, slope, sex and thal.
+3) Another group of clusters formed by rest of the features.
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+
+#ctree<-cutree(hc,k=3)
+#data.frame(ctree)%>%arrange(ctree)
+```
+
+Now that we have scaled the data, let us apply PCA technique to actual dataset. 
+
+Insight Gained: An interesting observation is, even after scaling the data, by performing PCAs, we understand how the first few PCAs account for most of the variance and data distribution among the features.
+
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+
+p_x<-prcomp(hd_xdiv)
+
+#Creation of a dataframe with only first two PCAs.
+df1<-data.frame(p_x$x[,1],p_x$x[,2])
+c<-c('pca1','pca2')
+colnames(df1)<-c
+
+#binding y outcome to the dataframe.
+df1<-cbind(type=hd_y,df1)
+rownames(df1) <- 1:nrow(df1)
+```
+
+Insight Gained: To see the results of the PCA analysis, let us plot PCA1 vs PCA2 and then all PCAs with a box plot to show how the first few PCAs account for all most all the feature importance and cumulated variance. 
+
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+
+# Plotting PCs, boxplot.  We can see PC1 is significantly different from others
+p2<-data.frame(type = hd_y ,p_x$x[,1:13]) %>%
+  gather(key = "PC",value="value", -type) %>%
+  ggplot(aes(PC,value,fill = type)) +
+  geom_boxplot()
+
+p2
+
+```
+
+
+
+Insight Gained: Next diagram clearly showes, even after scaling, the composition of predictabiilty of 0 and 1 based on PCA1 is higher than all the other PCAs combined. 
+
+We have seen a similar approach before scaling however, the variance between the features were so much that there could have been a predictive bias if we hadn't scaled the data. 
+
+
+
+
+
+# Creation of training and testing datasets. 
+
+
+
+Now that we have cleaned, analyzed and visualized the features, let us try to start writing machine learning models to predict the presence of heart disease. 
+
+Before beginning the process, let us break the dataset into training and testing so that, majority of the data set is used to train the model and then apply the training on test data to predict y_hat of y - in this case, the presence (1) or absence (0) of heart disease.
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+set.seed(1, sample.kind = "Rounding")    
+test_index <- createDataPartition(hd_y, times = 1, p = 0.15, list = FALSE)
+test_x <- hd_xdiv[test_index,]
+test_y <- hd_y[test_index]
+train_x <- hd_xdiv[-test_index,]
+train_y <- hd_y[-test_index]
+```
+Once the data is split into test and train data, let us look at their matrix distribution ( number of columns and rows)
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+dim(test_x)
+dim(train_x)
+
+```
+
+
+# Model Approach
+
+
+Since this is a classification problem of DISEASE or NOT DISEASE, let us try k-means, logistic regression, classification trees and random forest 
+
+# Model 1 : k-means clustering model
+
+similar to an exercise taught in the course, let us write a function for kmeans.
+
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+k<-kmeans(train_x,centers=2)
+#predicting
+pred_k<-predict_kmeans(test_x,k)
+
+#loading actual test y outcomes
+act_val_k<-test_y
+#converting predicted values to disease or not disease status
+pred_val_k<-ifelse(pred_k=='1','1','0')
+
+#using actual values and the predicted values, generating a confusion matrix. Only the overall accuracy is extracted out.
+kmeans_acc<-confusionMatrix(data=factor(pred_val_k),reference = factor(act_val_k))$overall["Accuracy"]
+kmeans_acc
+```
+
+# Modell 2: logistic regression model
+
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+
+
+
+#training
+train_glm<-train(y=factor(train_y),x=train_x, method="glm")
+
+#predicting
+predict_glm<-predict(train_glm,test_x)
+
+#using actual values and the predicted values, generating a confusion matrix. Only the overall accuracy is extracted out.
+glm_acc<-confusionMatrix(data=factor(predict_glm),reference = factor(test_y))$overall["Accuracy"]
+glm_acc
+```
+
+# Model 3: KNN Model
+
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+#setting up tunegrid parameter
+k_seq<-seq(3, 21, 2)
+
+#training
+train_knn<-train(y=factor(train_y),x=train_x, method="knn",tuneGrid = data.frame(k=k_seq))
+
+#predicting
+predict_knn<-predict(train_knn,test_x)
+
+#using actual values and the predicted values, generating a confusion matrix. Only the overall accuracy is extracted out.
+knn_acc<-confusionMatrix(data=predict_knn,reference = test_y)$overall["Accuracy"]
+knn_acc
+```
+
+# Model 4: classification Tree Model 
+
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+
+#training
+train_cls_tree<-train(y=factor(train_y),x=train_x, method="rpart",
+                      tuneGrid = data.frame(cp = seq(0, 0.05, 0.002)))
+
+
+#predicting
+predict_cls_tree<-predict(train_cls_tree,test_x)
+
+#using actual values and the predicted values, generating a confusion matrix. Only the overall accuracy is extracted out.
+cls_tree_acc<-confusionMatrix(data=predict_cls_tree,reference = test_y)$overall["Accuracy"]
+cls_tree_acc
+```
+For classification tree machine algorithm, we can try to create the tree structure and see if the cluster analysis helped in determining the features predicting the disease. The following diagram shows what complex parameter is 
+
+```{r ,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+#plotting the complex parameter maximized 
+par(mfrow=c(1,1))
+ggplot(train_cls_tree)
+
+
+```
+
+The following diagram shows the tree structure as explained above.
+
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+
+#plotting the tree
+plot(train_cls_tree$finalModel) 
+text(train_cls_tree$finalModel)
+```
+
+# Model 5: Randomg Forest Model 
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+#training
+train_rf<-train(y=factor(train_y),x=train_x, method="rf",
+                ntree=150,
+                tuneGrid = data.frame(mtry = seq(1,7,1)))
+
+#plotting the predictors against the boootstrap samples
+#ggplot(train_rf)
+
+#predicting
+predict_rf<-predict(train_rf,test_x)
+
+#using actual values and the predicted values, generating a confusion matrix. Only the overall accuracy is extracted out.
+rf_acc<-confusionMatrix(data=factor(predict_rf),reference = factor(test_y))$overall["Accuracy"]
+
+```
+
+Following diagram shows the optimum tree count to be chosen for the prediction. 
+
+
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+#finding out the optimum number of trees beyond with the error remains the same.
+plot(train_rf$finalModel,main="Random Forest Model - Optimum Tree Count")
+```
+
+Listing all Accuracies
+
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+rf_acc
+cls_tree_acc
+knn_acc
+glm_acc
+kmeans_acc
+```
+
+# Creation of an Ensemble Model
+
+Since there is variation in accuracy across different models, let us try to create an ensemble of all these models and see if we can improve the accuracy. What strategy could possibility be best fitting for this situation?
+
+One possible argument is, the model should try to focus on the specificity rate. That is, the model should be able to predict the disease correctly for those who have the disease. In other words, the model should try to reduce false negatives. Hence, I have ensured that the ensemble will predict that a person has the heart disease even if one of the models predicted the person to have heart disease. Let us see if this strategy improves the accuracy of the overall model especially with respect to specificity. 
+
+
+```{r,echo=FALSE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+
+#Creating Data Frame of all models along with the actual outcomes.
+result<-data.frame(
+  predict_cls_tree,
+  as.factor(pred_val_k),
+  predict_glm,
+  predict_rf,
+  predict_knn,
+  test_y)
+
+#adding column name
+cname<-(c("cls_tree","kmeans","glm","rf","knn","test_y"))
+colnames(result)<-cname
+
+
+```
+
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+#Based on the collection of all model values, let us predict the overall y_hat, 
+#fine-tuned by the ifelse condition to increase specificity. 
+
+result<-result%>%mutate(ens = 
+                          as.numeric(as.character(cls_tree))+
+                 as.numeric(as.character(kmeans))+
+                  as.numeric(as.character(glm))+
+                  as.numeric(as.character(rf))
+                  +as.numeric(as.character(knn))
+                   )%>%
+                    mutate(ensamble_y=ifelse(ens>=1,1,0))
+                    
+
+#Accuracy of Ensemble Model.                
+Ens_Acc<-confusionMatrix(data=as.factor(result$ensamble_y),reference = test_y)$overall["Accuracy"]                
+Ens_Acc
+#confusionMatrix(data=as.factor(result$ensamble_y),reference = test_y)
+```
+
+# Model Performance Analysis
+
+Individual models like classification tree and logistic offer 90 plus over all accuracies, however their specificity rate is not that impressive. As noted above, my approach on this project is to enhance specificity so that the real patients are truly identified. 
+
+# Why did I choose overall accuracy of 82 than 94?
+
+Even in the ensemble model, if the condition is changed from ifelse(ens>=1,1,0) to ifelse(ens>1,1,0), the overall accuracy is greatly increased to 94% - Meaning, a patient is considered having disease only if at least two models predict the person having a disease. However, the goal here is not to increase overall accuracy but to increase specificity rate. The confusion matrix below shows how best the specificity rate is for the ensemble model.
+
+This ensures that when a person has heart disease, he or she is truly identified to be having heart disease and any posible false negatives are avoided.
+
+
+```{r}
+confusionMatrix(data=as.factor(result$ensamble_y),reference = test_y)
+```
+
+
+
+As an added measure, the RMSE is calculated for the model.
+
+```{r,echo=TRUE, results='markup',tidy=TRUE, eval=TRUE, warning=FALSE}
+#Finale RMSE of Ensemble Model
+
+RMSE(as.numeric(result$ensamble_y),as.numeric(as.character(test_y)))
+
+
+```
+
+# Conclusion
+As stated in the introduction, the goal of this project is to create a list of models that enhances the prediction of heart disease present, which has been met as explained in the sections above. However, the work is not done yet. The future work or the pending work in this model is to ingest more data available from different countries and see how model performs. 
+
+This is due to the limitation that there are only a few hundred data set available for the prediction. This could very well explain a presence of overfitting or overtraining of the model data.
